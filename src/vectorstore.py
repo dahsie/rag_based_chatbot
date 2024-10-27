@@ -2,10 +2,13 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import WebBaseLoader
+
 from langchain_core.documents import Document
 
-from typing import List
 
+from typing import List, Optional
+import re
 
 class VectorStore:
     """
@@ -52,8 +55,33 @@ class VectorStore:
         self.__vectorestore = None
         self.__retriever = None
     
-    
-    def load_docs(self, files_path: List[str]) -> List[Document]:
+    def extract_urls(self,text_list: List[str]) -> List[str]:
+        """
+        Checks if there are URLs in the given list of strings. If URLs are found,
+        returns a list containing only the URLs.
+
+        Args:
+            text_list (List[str]): The list of strings to check for URLs.
+
+        Returns:
+            List[str]: A list containing only the URLs found in the input list.
+                    Returns an empty list if no URLs are found.
+        
+        Example:
+            text_list = [
+                "https://example.com",
+                "No URL here",
+                "https://another-example.com"
+            ]
+            result = extract_urls(text_list)
+            # Result: ['https://example.com', 'https://another-example.com']
+        """
+
+        url_pattern = re.compile(r"https?://[^\s]+")
+        urls = [text for text in text_list if url_pattern.match(text)]
+        return urls
+
+    def load_docs(self, files_path: Optional[List[str]] = None, urls: Optional[List[str]] = None) -> List[Document]:
         """
         Loads PDF documents from the specified file paths.
 
@@ -68,7 +96,19 @@ class VectorStore:
             A list of loaded Document objects.
         """
 
-        docs = [PyPDFLoader(file_path = file_path,extract_images = False).load() for file_path in files_path]
+        if (files_path is None or len(files_path) == 0) and (urls is None or len(urls) == 0):
+            raise ValueError("list 'urls' or list of 'files_path' must not be both 'None' or empty")
+        pdf_docs, web_docs = [], []
+
+        if urls is not None and len(urls) != 0:
+            urls = self.extract_urls(text_list = urls)
+            web_docs = [WebBaseLoader(url).load() for url in urls]
+
+        if files_path is not None and len(files_path) != 0:
+            pdf_docs = [PyPDFLoader(file_path = file_path,extract_images = False).load() for file_path in files_path]
+
+        docs = pdf_docs + web_docs
+
         return docs
     
     def split_docs(self, docs: List[Document]) -> List[Document]:
@@ -94,7 +134,7 @@ class VectorStore:
     
 
 
-    def create_vectorsore(self, files_path: List[str]) -> FAISS:
+    def create_vectorsore(self, files_path: Optional[List[str]] = None, urls: Optional[List[str]] = None) -> FAISS:
         """
         Creates the FAISS vector store by loading, splitting, and embedding documents.
 
@@ -108,7 +148,7 @@ class VectorStore:
         FAISS
             The created FAISS vector store instance.
         """
-        docs = self.load_docs(files_path = files_path)
+        docs = self.load_docs(files_path = files_path, urls = urls)
         doc_splits = self.split_docs(docs = docs)
         self.__vectorestore  = FAISS.from_documents(documents=doc_splits,embedding=self.__embedding)
         self. __retriever = self.__vectorestore.as_retriever()
